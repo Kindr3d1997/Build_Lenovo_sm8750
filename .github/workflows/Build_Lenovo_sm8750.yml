@@ -829,8 +829,12 @@ jobs:
           # 2. 进入内核源码树
           cd kernel_workspace/common
           
-          # 3. 指向你的模块目录并编译（注意使用 clang 和 ld.lld）
-          make ARCH=arm64 LLVM=1 CC="clang" LD="ld.lld" M=${{ github.workspace }}/touch_block modules
+          # 3. 编译外部模块，注意 O=out 必须和 Build Kernel 步骤保持一致
+          make -j$(nproc) ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- \
+               CC="clang" LD="ld.lld" HOSTLD=ld.lld \
+               O=out \
+               M=${{ github.workspace }}/touch_block \
+               modules
 
       - name: 📤 Upload touch_block.ko (上传你的模块)
         uses: actions/upload-artifact@v5
