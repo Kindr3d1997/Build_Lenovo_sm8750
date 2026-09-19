@@ -826,16 +826,30 @@ jobs:
           export PATH="${{ github.workspace }}/kernel_workspace/build-tools/bin:$PATH"
           cd kernel_workspace/common
 
-          # 先尝试把 out/ 下的符号表复制到源码根目录，让 modpost 能找到
+          # 1. 把 out/ 下编译产生的关键配置文件复制回源码树
+          echo "==> 将 out/ 编译产物复制回源码树..."
+          cp out/.config .config 2>/dev/null || true
+          mkdir -p include/config include/generated
+          cp -r out/include/config/* include/config/ 2>/dev/null || true
+          cp -r out/include/generated/* include/generated/ 2>/dev/null || true
           cp out/Module.symvers ./Module.symvers 2>/dev/null || true
 
-          # 编译模块，KBUILD_MODPOST_WARN=1 让未定义符号只报警告不中断
+          # 2. 补全剩余自动生成文件（时间较短，通常 30 秒内完成）
+          echo "==> 准备源码树 (modules_prepare)..."
           make -j$(nproc) ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- \
                CC="clang" LD="ld.lld" HOSTLD=ld.lld \
-               O=out \
+               olddefconfig modules_prepare 2>&1 | tail -5 || true
+
+          # 3. 编译外部模块（不带 O=out，让 .ko 输出到 touch_block/ 目录）
+          echo "==> 编译 touch_block.ko..."
+          make -j$(nproc) ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- \
+               CC="clang" LD="ld.lld" HOSTLD=ld.lld \
                KBUILD_MODPOST_WARN=1 \
                M=${{ github.workspace }}/touch_block \
                modules
+
+          echo "==> 编译完成，检查输出文件："
+          ls -lh ${{ github.workspace }}/touch_block/*.ko
 
       - name: 📤 Upload touch_block.ko (上传你的模块)
         uses: actions/upload-artifact@v5
