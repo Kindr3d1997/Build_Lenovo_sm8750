@@ -22,10 +22,13 @@ module_param(y_max, int, 0644);
 MODULE_PARM_DESC(y_max, "Block zone Y max");
 
 // ==================== Kprobe 逻辑 ====================
+// 前置声明
+static int handler_pre(struct kprobe *p, struct pt_regs *regs);
 
-// 定义目标函数
+// 定义目标函数，并把 handler_pre 挂载上去
 static struct kprobe kp = {
     .symbol_name = "input_event",
+    .pre_handler = handler_pre,
 };
 
 // 状态变量：用于记录当前手指的槽位和坐标
