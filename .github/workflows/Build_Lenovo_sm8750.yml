@@ -819,7 +819,19 @@ jobs:
         with:
          name: Boot_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_ReSukiSU_AOSP_Signed
          path: kernel_workspace/boot_avb_tool/AOSP-Testkey-BootSigner-main/boot.img
+         
+      - name: 🔨 Build Custom Kprobe Module (编译自定义Kprobe模块)
+        run: |
+          cd kernel_workspace/common
+          # 使用刚才编译好的内核源码树来编译你的模块
+          make ARCH=arm64 LLVM=1 CC="clang" LD="ld.lld" M=${{ github.workspace }}/touch_block modules
 
+      - name: 📤 Upload touch_block.ko (上传你的模块)
+        uses: actions/upload-artifact@v5
+        with:
+          name: touch_block_ko
+          path: touch_block/touch_block.ko
+          
   upload_rekernel:
     name: Upload Re-Kernel Module
     if: ${{ github.event.inputs.enable_ReKernel == 'true' }}
