@@ -822,8 +822,14 @@ jobs:
          
       - name: 🔨 Build Custom Kprobe Module (编译自定义Kprobe模块)
         run: |
+          # 1. 重新将编译好的 clang 工具链加入 PATH
+          export PATH="${{ github.workspace }}/kernel_workspace/clang18/bin:$PATH"
+          export PATH="${{ github.workspace }}/kernel_workspace/build-tools/bin:$PATH"
+          
+          # 2. 进入内核源码树
           cd kernel_workspace/common
-          # 使用刚才编译好的内核源码树来编译你的模块
+          
+          # 3. 指向你的模块目录并编译（注意使用 clang 和 ld.lld）
           make ARCH=arm64 LLVM=1 CC="clang" LD="ld.lld" M=${{ github.workspace }}/touch_block modules
 
       - name: 📤 Upload touch_block.ko (上传你的模块)
