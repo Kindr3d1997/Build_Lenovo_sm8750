@@ -1,54 +1,81 @@
 // SPDX-License-Identifier: GPL-2.0
+/*
+ * touch_block.c - 双旋转矩形物理阻断条内核模块
+ *
+ * 屏幕坐标基准：横屏 3040×1904
+ * 原始触摸坐标：X[0,19040] Y[0,30400]
+ * 实测换算（横屏）：
+ *   screenX = rawY / 10
+ *   screenY = (19040 - rawX) / 10
+ */
+
 #include <linux/module.h>
 #include <linux/kprobes.h>
 #include <linux/input.h>
 #include <linux/types.h>
 #include <linux/string.h>
 
+/* 屏幕参数 */
+#define SCREEN_W    3040
+#define SCREEN_H    1904
+#define RAW_X_MAX   19040   /* 竖屏自然方向宽度 × 10 */
+
 static int enable = 1;
 module_param(enable, int, 0644);
 MODULE_PARM_DESC(enable, "Enable block (1=on, 0=off)");
 
+/* 阻断矩形（屏幕坐标系） */
 struct block_rect {
-    s64 center_raw_x;
-    s64 center_raw_y;
-    s64 half_len_raw;
-    s64 half_wid_raw;
-    s64 cos_x1e6;
-    s64 sin_x1e6;
+    s32 cx_screen;   /* 屏幕 X 中心 */
+    s32 cy_screen;   /* 屏幕 Y 中心 */
+    s32 half_len;    /* 半长（屏幕单位） */
+    s32 half_wid;    /* 半宽（屏幕单位） */
+    s32 cos_x1e6;    /* cos(顺时针角度) × 1e6 */
+    s32 sin_x1e6;    /* sin(顺时针角度) × 1e6 */
 };
 
 static const struct block_rect block_rects[] = {
     {   /* 矩形1：屏幕(2757, 1228) 长380 宽40 顺时针70° */
-        .center_raw_x = 12280,
-        .center_raw_y = 27570,
-        .half_len_raw = 1900,
-        .half_wid_raw = 200,
-        .cos_x1e6     = 342020,
-        .sin_x1e6     = 939693,
+        .cx_screen = 2757,
+        .cy_screen = 1228,
+        .half_len  = 190,
+        .half_wid  = 20,
+        .cos_x1e6  = 342020,
+        .sin_x1e6  = 939693,
     },
     {   /* 矩形2：屏幕(2841, 1218) 同参数 */
-        .center_raw_x = 12180,
-        .center_raw_y = 28410,
-        .half_len_raw = 1900,
-        .half_wid_raw = 200,
-        .cos_x1e6     = 342020,
-        .sin_x1e6     = 939693,
+        .cx_screen = 2841,
+        .cy_screen = 1218,
+        .half_len  = 190,
+        .half_wid  = 20,
+        .cos_x1e6  = 342020,
+        .sin_x1e6  = 939693,
     },
 };
 #define NUM_RECTS (sizeof(block_rects) / sizeof(block_rects[0]))
 
+/*
+ * 判断 raw 触摸点是否落在任一旋转矩形内。
+ * 思路：先把 raw 转成屏幕坐标 × 10（保持整数精度），
+ *       再在屏幕坐标系下做逆旋转，判断是否在矩形内。
+ */
 static bool point_in_any_block(int raw_x, int raw_y)
 {
     int i;
+    /* raw → 屏幕坐标 × 10 */
+    s64 sx10 = (s64)raw_y;                 /* 屏幕 X × 10 */
+    s64 sy10 = RAW_X_MAX - (s64)raw_x;     /* 屏幕 Y × 10（反向） */
+
     for (i = 0; i < (int)NUM_RECTS; i++) {
         const struct block_rect *r = &block_rects[i];
-        s64 dsx = (s64)raw_y - r->center_raw_x;
-        s64 dsy = (s64)raw_x - r->center_raw_y;
+        s64 cx10 = (s64)r->cx_screen * 10;
+        s64 cy10 = (s64)r->cy_screen * 10;
+        s64 dsx = sx10 - cx10;
+        s64 dsy = sy10 - cy10;
         s64 u = dsx * r->cos_x1e6 + dsy * r->sin_x1e6;
         s64 v = -dsx * r->sin_x1e6 + dsy * r->cos_x1e6;
-        s64 ulim = r->half_len_raw * 1000000;
-        s64 vlim = r->half_wid_raw * 1000000;
+        s64 ulim = (s64)r->half_len * 10 * 1000000;
+        s64 vlim = (s64)r->half_wid * 10 * 1000000;
         if (u > -ulim && u < ulim && v > -vlim && v < vlim)
             return true;
     }
@@ -67,7 +94,6 @@ static int current_slot = 0;
 static int last_x[MAX_SLOTS] = {0};
 static int last_y[MAX_SLOTS] = {0};
 static bool slot_blocked[MAX_SLOTS] = {false};
-static bool name_logged = false;   /* 只打印一次设备名，用于诊断 */
 
 static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
@@ -78,14 +104,6 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
 
     if (!dev || !dev->name)
         return 0;
-
-    /* 【诊断】只打印一次第一次遇到的设备名 */
-    if (!name_logged) {
-        name_logged = true;
-        pr_info("touch_block: first dev name = [%s]\n", dev->name);
-    }
-
-    /* 用 strncmp 匹配前 23 字符，避免末尾空字符差异 */
     if (strncmp(dev->name, "NVTCapacitiveTouchScreen", 23) != 0)
         return 0;
     if (type != EV_ABS)
@@ -105,20 +123,22 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         int cx = last_x[current_slot];
         int cy = last_y[current_slot];
 
-        /* 【诊断】每次手指按下都打印原始坐标 */
+        /* 【诊断】每次按下打印 raw 坐标，验证完后可删 */
         pr_info("touch_block: DOWN slot=%d raw(%d,%d)\n",
                 current_slot, cx, cy);
 
         if (point_in_any_block(cx, cy)) {
-            regs->regs[3] = -1;
+            regs->regs[3] = -1;   /* 强制抬起 */
             if (!slot_blocked[current_slot]) {
                 slot_blocked[current_slot] = true;
-                pr_info("touch_block: === BLOCKED slot=%d ===\n", current_slot);
+                pr_info("touch_block: === BLOCKED slot=%d ===\n",
+                        current_slot);
             }
         } else {
             if (slot_blocked[current_slot]) {
                 slot_blocked[current_slot] = false;
-                pr_info("touch_block: === UNBLOCKED slot=%d ===\n", current_slot);
+                pr_info("touch_block: === UNBLOCKED slot=%d ===\n",
+                        current_slot);
             }
         }
     }
@@ -146,3 +166,4 @@ static void __exit touch_block_exit(void)
 module_init(touch_block_init);
 module_exit(touch_block_exit);
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Dual rotated-rectangle touch block kprobe");
