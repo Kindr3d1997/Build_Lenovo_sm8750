@@ -124,8 +124,8 @@ static int handler_pre(struct kprobe *p, struct pt_regs *regs)
         int cy = last_y[current_slot];
 
         /* 【诊断】每次按下打印 raw 坐标，验证完后可删 */
-        pr_info("touch_block: DOWN slot=%d raw(%d,%d)\n",
-                current_slot, cx, cy);
+        /*pr_info("touch_block: DOWN slot=%d raw(%d,%d)\n",
+                current_slot, cx, cy);*/
 
         if (point_in_any_block(cx, cy)) {
             regs->regs[3] = -1;   /* 强制抬起 */
