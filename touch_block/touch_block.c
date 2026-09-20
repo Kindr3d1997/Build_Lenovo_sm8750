@@ -70,7 +70,7 @@ static bool point_in_any_block(int raw_x, int raw_y)
         s64 dsx = (s64)raw_y - r->center_raw_x;  /* 屏幕X方向偏移 ×10 */
         s64 dsy = (s64)raw_x - r->center_raw_y;  /* 屏幕Y方向偏移 ×10 */
         s64 u = dsx * r->cos_x1e6 + dsy * r->sin_x1e6;
-        s64 v = -dsx * r->sin_x1e6 + dy * r->cos_x1e6;
+        s64 v = -dsx * r->sin_x1e6 + dsy * r->cos_x1e6;
         s64 ulim = r->half_len_raw * 1000000;
         s64 vlim = r->half_wid_raw * 1000000;
         if (u > -ulim && u < ulim && v > -vlim && v < vlim)
